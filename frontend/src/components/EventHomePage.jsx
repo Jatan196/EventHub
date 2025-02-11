@@ -3,10 +3,12 @@ import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
+import { socket } from '../index';
 
 const EventHomePage = () => {
   const [events, setEvents] = useState([]);
   const [filteredEvents, setFilteredEvents] = useState([]);
+  const [eventCounts, setEventCounts] = useState({});
   const [filters, setFilters] = useState({
     timeFrame: 'upcoming',
     category: 'all',
@@ -16,44 +18,90 @@ const EventHomePage = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
+    // Socket event listeners
+    socket.on('guestCountUpdate', ({ eventId, guestCount }) => {
+      setEventCounts(prev => ({
+        ...prev,
+        [eventId]: guestCount
+      }));
+    });
+
+    return () => {
+      socket.off('guestCountUpdate');
+    };
+  }, []);
+
+  useEffect(() => {
     // Check if user is event official
-    const token = localStorage.getItem('token');
-    const isGuestUser = localStorage.getItem('isGuestUser') === 'true';
+    // const token = localStorage.getItem('token');
+    // const isGuestUser = localStorage.getItem('isGuestUser') === 'true';
     
-    if (!token) {
-      navigate('/login');
-      return;
-    }
+    // if (!token) {
+    //   navigate('/login');
+    //   return;
+    // }
     
-    if (!isGuestUser) {
-      navigate('/dashboard');
-      return;
-    }
+    // if (!isGuestUser) {
+    //   navigate('/dashboard');
+    //   return;
+    // }
 
     fetchEvents();
-  }, [navigate]);
+  }, []);
 
   const fetchEvents = async () => {
     try {
-      const response = await axios.get('http://localhost:8000/api/v1/events');
+      const response = await axios.get('http://localhost:8000/api/v1/events', {
+        withCredentials: true,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      });
+      
       if (response.data.success) {
         setEvents(response.data.data);
       }
     } catch (error) {
-      console.error('Error fetching events:', error);
+      if (error.response?.status === 401) {
+        navigate('/login');
+      } else {
+        console.error('Error fetching events:', error);
+        toast.error('Failed to fetch events');
+      }
     }
   };
 
   const handleJoinEvent = async (eventId) => {
     try {
-      const token = localStorage.getItem('token');
-      await axios.post(`http://localhost:8000/api/v1/events/${eventId}/join`, {}, {
-        headers: { Authorization: `Bearer ${token}` }
+      const userId = localStorage.getItem('userId');
+      const isGuestUser = localStorage.getItem('isGuestUser') === 'true';
+
+      if (!userId) {
+        toast.error('Please login to join events');
+        navigate('/login');
+        return;
+      }
+
+      if (!isGuestUser) {
+        toast.error('Only guest users can join events');
+        return;
+      }
+
+      const response = await axios.post(`http://localhost:8000/api/v1/events/${eventId}/join`, {}, {
+        withCredentials: true,
+        headers: {
+          'Content-Type': 'application/json'
+        }
       });
-      toast.success('Successfully joined the event!');
-      fetchEvents(); // Refresh events list
+
+      if (response.data.success) {
+        socket.emit('joinEvent', { eventId, userId });
+        toast.success(response.data.message || 'Successfully joined the event!');
+        fetchEvents(); // Refresh the events list
+      }
     } catch (error) {
-      toast.error(error.response?.data?.message || 'Failed to join event');
+      console.error('Error joining event:', error);
+      toast.error(error.response?.data?.error || 'Failed to join event');
     }
   };
 
@@ -165,6 +213,14 @@ const EventHomePage = () => {
               {event.category}
             </span>
             <p className="mt-2 text-gray-700">{event.description}</p>
+            <div className="flex items-center justify-between mt-4 mb-4">
+              <div className="flex items-center text-gray-600">
+                <span>{event.totalAttendees || 0} registered</span>
+              </div>
+              <div className="flex items-center text-green-600">
+                <span>{eventCounts[event._id] || 0} live</span>
+              </div>
+            </div>
             <div className="mt-4">
               <button
                 onClick={() => handleJoinEvent(event._id)}

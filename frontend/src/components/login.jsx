@@ -13,7 +13,6 @@ const Login = () => {
 
     const onSubmitHandler = async (e) => {
         e.preventDefault();
-        console.log(user);
     
         try { 
             const res = await fetch("http://localhost:8000/api/v1/user/signin", {
@@ -26,16 +25,15 @@ const Login = () => {
             });
             
             const data = await res.json();
-            
+            console.log(data);
             if (res.ok) {
-                localStorage.setItem('token', data.token);
                 localStorage.setItem('userId', data.userId);
+                localStorage.setItem('isGuestUser', data.isGuestUser);
 
-                console.log("data.isGuestUser", data.isGuestUser);
-                if (data.isGuestUser===true) {
-                  //  navigate("/events");
+                if (data.isGuestUser) {
+                    navigate("/events");
                 } else {
-                    //navigate("/dashboard");
+                    navigate("/dashboard");
                 }
                 toast.success("Login successful!");
             } else {
@@ -43,7 +41,7 @@ const Login = () => {
             }
         } catch (error) {
             toast.error(error.response?.data?.message || "Something went wrong");
-            console.log(error);
+            console.error(error);
         }
     };
 

@@ -1,10 +1,13 @@
 import React, { useState } from 'react';
 import { Formik, Form, Field, ErrorMessage } from 'formik';
 import axios from 'axios';
+import { toast } from 'react-hot-toast';
+import { useNavigate } from 'react-router-dom';
 
 const CreateEventForm = () => {
   const [isVirtual, setIsVirtual] = useState(false);
   const [error, setError] = useState(null);
+  const navigate = useNavigate();
   
   const initialValues = {
     title: '',
@@ -107,36 +110,42 @@ const CreateEventForm = () => {
   const handleSubmit = async (values, { setSubmitting, resetForm }) => {
     try {
       setError(null);
-      // Get the user ID from localStorage or your auth state management
-      const userId = localStorage.getItem('userId'); // Adjust based on your auth implementation
+      const userId = localStorage.getItem('userId');
       
       if (!userId) {
-        setError('User not authenticated. Please login first.');
+        toast.error('User not authenticated. Please login first.');
+        navigate('/login');
         return;
       }
 
-      // Add organizer information to the values
       const eventData = {
         ...values,
         organizer: {
-          userId // Send as a single value, not an array
+          userId
         }
       };
 
       const response = await axios.post('http://localhost:8000/api/v1/events', eventData, {
+        withCredentials: true,
         headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('token')}` // Add token for authentication
+          'Content-Type': 'application/json'
         }
       });
 
       if (response.data.success) {
         resetForm();
-        alert('Event created successfully!');
+        toast.success('Event created successfully!');
+        navigate('/dashboard');
       }
     } catch (error) {
-      const errorMessage = error.response?.data?.error || 'Error creating event. Please try again.';
-      setError(errorMessage);
+      if (error.response?.status === 401) {
+        toast.error('Please login to create an event');
+        navigate('/login');
+      } else {
+        const errorMessage = error.response?.data?.error || 'Error creating event. Please try again.';
+        setError(errorMessage);
+        toast.error(errorMessage);
+      }
       console.error('Error creating event:', error);
     } finally {
       setSubmitting(false);

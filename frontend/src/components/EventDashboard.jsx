@@ -1,47 +1,91 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { FaEdit, FaTrash, FaUsers } from 'react-icons/fa';
+import toast from 'react-hot-toast';
+import { socket } from '../index';
 
 const EventDashboard = () => {
     const [events, setEvents] = useState([]);
     const [loading, setLoading] = useState(true);
+    const [eventCounts, setEventCounts] = useState({});
+    const navigate = useNavigate();
 
     useEffect(() => {
-        const fetchEvents = async () => {
-            try {
-                const token = localStorage.getItem('token');
-                const response = await axios.get('http://localhost:8000/api/v1/events', {
-                    headers: { Authorization: `Bearer ${token}` }
-                });
-                // Filter events where user is organizer
-                const userId = localStorage.getItem('userId');
-                const myEvents = response.data.data.filter(event => 
-                    event.organizer?.userId?.includes(userId)
-                );
-                setEvents(myEvents);
-            } catch (error) {
-                
-                console.error('Error fetching events:', error);
-            } finally {
-                setLoading(false);
-            }
+        socket.on('guestCountUpdate', ({ eventId, guestCount }) => {
+            setEventCounts(prev => ({
+                ...prev,
+                [eventId]: guestCount
+            }));
+        });
+
+        socket.on('eventCounts', (counts) => {
+            setEventCounts(counts);
+        });
+
+        return () => {
+            socket.off('guestCountUpdate');
+            socket.off('eventCounts');
         };
-        fetchEvents();
+    }, []);
+
+    const fetchMyEvents = async () => {
+        try {
+            setLoading(true);
+            const userId = localStorage.getItem('userId');
+            const response = await axios.get(`http://localhost:8000/api/v1/events/owner/${userId}`, {
+                withCredentials: true,
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            });
+            if (response.data.success) {
+                setEvents(response.data.data);
+                response.data.data.forEach(event => {
+                    socket.emit('joinEvent', {
+                        eventId: event._id,
+                        userId: localStorage.getItem('userId')
+                    });
+                });
+            }
+        } catch (error) {
+            console.error('Error fetching your events:', error);
+            toast.error('Failed to fetch your events');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    useEffect(() => {
+        fetchMyEvents();
+        return () => {
+            events.forEach(event => {
+                socket.emit('leaveEvent', { eventId: event._id });
+            });
+        };
     }, []);
 
     const handleDeleteEvent = async (eventId) => {
         if (window.confirm('Are you sure you want to delete this event?')) {
             try {
-                const token = localStorage.getItem('token');
                 await axios.delete(`http://localhost:8000/api/v1/events/${eventId}`, {
-                    headers: { Authorization: `Bearer ${token}` }
+                    withCredentials: true,
+                    headers: {
+                        'Content-Type': 'application/json'
+                    }
                 });
                 setEvents(events.filter(event => event._id !== eventId));
+                socket.emit('leaveEvent', { eventId });
+                toast.success('Event deleted successfully');
             } catch (error) {
                 console.error('Error deleting event:', error);
+                toast.error('Failed to delete event');
             }
         }
+    };
+
+    const handleEditEvent = (eventId) => {
+        navigate(`/events/${eventId}/edit`);
     };
 
     if (loading) {
@@ -51,7 +95,9 @@ const EventDashboard = () => {
     return (
         <div className="container mx-auto p-4">
             <div className="flex justify-between items-center mb-6">
-                <h1 className="text-3xl font-bold">My Events</h1>
+                <div className="flex items-center space-x-4">
+                    <h1 className="text-3xl font-bold">Event Dashboard</h1>
+                </div>
                 <Link
                     to="/events/new"
                     className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
@@ -66,12 +112,12 @@ const EventDashboard = () => {
                         <div className="flex justify-between items-start mb-2">
                             <h2 className="text-xl font-semibold">{event.title}</h2>
                             <div className="flex space-x-2">
-                                <Link
-                                    to={`/events/${event._id}/edit`}
+                                <button
+                                    onClick={() => handleEditEvent(event._id)}
                                     className="text-blue-600 hover:text-blue-800"
                                 >
                                     <FaEdit size={20} />
-                                </Link>
+                                </button>
                                 <button
                                     onClick={() => handleDeleteEvent(event._id)}
                                     className="text-red-600 hover:text-red-800"
@@ -87,9 +133,11 @@ const EventDashboard = () => {
                             {event.category}
                         </span>
                         <p className="text-gray-700 mb-4">{event.description}</p>
-                        <div className="flex items-center text-gray-600">
-                            <FaUsers className="mr-2" />
-                            <span>{event.totalAttendees || 0} attendees</span>
+                        <div className="flex items-center justify-end text-gray-600">
+                            <div className="flex items-center">
+                                <FaUsers className="mr-2 text-green-600" />
+                                <span className="text-green-600">{eventCounts[event._id] || 0} live</span>
+                            </div>
                         </div>
                         <div className="mt-2">
                             <span className={`px-2 py-1 rounded-full text-sm ${
@@ -106,7 +154,7 @@ const EventDashboard = () => {
 
             {events.length === 0 && (
                 <div className="text-center py-10">
-                    <p className="text-gray-500">You haven't created any events yet.</p>
+                    <p className="text-gray-500">No events found.</p>
                     <Link
                         to="/events/new"
                         className="text-blue-600 hover:text-blue-800 font-medium mt-2 inline-block"

@@ -1,9 +1,8 @@
 import { User } from "../model/user.js";
-
+import jwt from 'jsonwebtoken';
 
 export const signUp = async (req, res) => {
     const { name, email, phone, address, password, isGuestUser, organization, aadharNumber, gstNumber } = req?.body;
-    console.log(req.body)
     try {
         const userInfo = {
             name,
@@ -16,12 +15,8 @@ export const signUp = async (req, res) => {
             aadharNumber,
             gstNumber
         }
-        console.log(userInfo)
         const newUser = new User(userInfo);
-
         const result = await newUser.save();
-
-        console.log("Done");
         return res.status(200).json(result);
     } catch (error) {
         return res.status(400).json({
@@ -30,35 +25,66 @@ export const signUp = async (req, res) => {
         })
     }
 }
+
 export const signIn = async (req, res) => {
     const { email, password } = req?.body;
-    console.log(req.body)
     try {
-        const currUser = await User.findOne({ email: email });
+        const user = await User.findOne({ email: email });
 
-        if (currUser && currUser.password === password) {
-            return res.status(200).json({ 
-                id: currUser._id,
-                isGuestUser: currUser.isGuestUser 
+        if (!user) {
+            return res.status(400).json({
+                success: false,
+                message: "User not found"
             });
-        } else {
-            return res.status(400).json({ message: "Bad auth" });
         }
+
+        if (user.password !== password) {
+            return res.status(400).json({
+                success: false, 
+                message: "Invalid password"
+            });
+        }
+
+        const token = jwt.sign(
+            { 
+                userId: user._id,
+                isGuestUser: user.isGuestUser 
+            },
+            process.env.JWT_SECRET,
+            { expiresIn: '24h' }
+        );
+
+        res.cookie('token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 24 * 60 * 60 * 1000 // 24 hours
+        });
+
+        return res.status(200).json({ 
+            success: true,
+            userId: user._id,
+            isGuestUser: user.isGuestUser,
+            token: token
+        });
 
     } catch (error) {
         return res.status(400).json({
-            message: "error",
-            error
+            success: false,
+            message: "Authentication failed",
+            error: error.message
         })
-    }
+    }   
 }
 
 export const signOut = async (req, res) => {
     try {
-        // Clear any server-side session data if needed
-        req.session = null;
-
-        // Send response to clear client-side storage
+        res.clearCookie('token', {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict'
+        });
+        
         return res.status(200).json({
             success: true,
             message: "Successfully logged out"
